@@ -120,7 +120,7 @@ class Line():
         self.ave_left = []
         self.ave_right = []
 
-        self.MAX_BUFFER_SIZE = 15
+        self.MAX_BUFFER_SIZE = 10
 
         self.buffer_index = 0
         self.iter_counter = 0
@@ -212,15 +212,15 @@ class Line():
             self.ave_left = np.average(self.buffer_left, axis=0)
             self.ave_right = np.average(self.buffer_right, axis=0)
 
-        fill_img = self.fill_lanes(binary_img, self.ave_left, self.ave_right)
-        #fill_img = self.paint_pretty_lines(binary_img, self.ave_left, self.ave_right)
+        #fill_img = self.fill_lanes(binary_img, self.ave_left, self.ave_right)
+        fill_img = self.paint_pretty_lines(input_image, self.ave_left, self.ave_right)
 
         curvature_text = 'Left Curvature: {:.2f} m    Right Curvature: {:.2f} m'.format(self.radius_of_curvature[0], self.radius_of_curvature[1])
         curvature_text += text
         percent_text = "left: " + str(percent_left) + " right:  " + str(percent_right) + " skipped: " + str(self.skipped) + "iter: " + str(self.buffer_index)
         font = cv2.FONT_HERSHEY_SIMPLEX
 
-        merge_imgs = self.merge_imgs(fill_img, binary_img)
+        merge_imgs = self.merge_imgs(fill_img, input_image)
         cv2.putText(merge_imgs, curvature_text, (100, 50), font, 1, (221, 28, 119), 2)
         cv2.putText(merge_imgs, percent_text, (100, 150), font, 1, (0, 255, 0), 2)
 
@@ -356,7 +356,7 @@ class Line():
         cp_bin = np.copy(binary_img)
         cp_original = np.copy(original_img)
 
-        #cp_bin = unwarp(cp_bin)
+        cp_bin = unwarp(cp_bin)
         #cp_original = warp(cp_original)
         return cv2.addWeighted(cp_original, 1, cp_bin, 0.3, 0)
 
