@@ -22,7 +22,7 @@ def binaryImage(image, sobel_thresh=[0, 255], l_thresh=[0, 255], s_thresh=[0,255
 
     # Next we use an X direction Sobel
     # 1, 0 below for x direction
-    sobel_x =  cv2.Sobel(l_channel, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_x =  cv2.Sobel(l_channel, cv2.CV_64F, 1, 0, ksize=5)
     # Then we scale
     abs_sobel_x = np.absolute(sobel_x)
     scaled_sobel_x = np.uint8( 255 * abs_sobel_x / np.max(abs_sobel_x))
@@ -55,8 +55,10 @@ def warp(img):
 
     img_size = (img.shape[1], img.shape[0])
 
-    src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
-    dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
+    #src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
+    #dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
+    src = np.float32([[253, 697],[585, 456],[700, 456],[1061, 690]])
+    dst = np.float32([[303, 697],[303, 0],[1011, 0],[1011, 690]])
 
     M = cv2.getPerspectiveTransform(src, dst)
 
@@ -65,8 +67,10 @@ def warp(img):
 def unwarp(img):
     img_size = (img.shape[1], img.shape[0])
 
-    src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
-    dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
+    #src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
+    #dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
+    src = np.float32([[253, 697],[585, 456],[700, 456],[1061, 690]])
+    dst = np.float32([[303, 697],[303, 0],[1011, 0],[1011, 690]])
 
     M = cv2.getPerspectiveTransform(dst, src)
 
@@ -86,7 +90,7 @@ class Line():
         #polynomial coefficients for the most recent fit
         self.current_fit = [np.array([False])]
         #radius of curvature of the line in some units
-        self.radius_of_curvature = None
+        self.radius_of_curvature = []
         #distance in meters of vehicle center from the line
         self.line_base_pos = None
         #difference in fit coefficients between last and new fits
@@ -99,6 +103,19 @@ class Line():
         self.dist = dist
         self.left_fit = []
         self.right_fit = []
+        self.left_buffer = []
+        self.right_buffer = []
+        self.skipped = 0
+        self.ave_left = []
+        self.ave_right = []
+
+        self.MAX_BUFFER_SIZE = 30
+
+        self.buffer_index = 0
+        self.iter_counter = 0
+
+        self.buffer_left = np.zeros((self.MAX_BUFFER_SIZE, 720))
+        self.buffer_right = np.zeros((self.MAX_BUFFER_SIZE, 720))
 
     def analyze(self, input_image):
         img = np.copy(input_image)
@@ -108,18 +125,71 @@ class Line():
         # 2. Warp Image
         warped_img = warp(undistorted_img)
         # 3. Create Binary Representation
-        binary_imgs = binaryImage(warped_img, sobel_thresh=[20, 100], l_thresh=[90, 255], s_thresh=[170,255])
+        binary_imgs = binaryImage(warped_img, sobel_thresh=[20, 255], l_thresh=[90, 255], s_thresh=[170,255])
+        #binary_imgs = binaryImage(warped_img, sobel_thresh=[20, 255], l_thresh=[30, 255], s_thresh=[170,255])
         binary_img = binary_imgs[0]
 
 
         if self.detected:
-            fit_left, fit_right = self.repeat_lane_finder(binary_img)
+            left_fit, right_fit, left_fitx, right_fitx = self.repeat_lane_finder(binary_img)
         else:
-            fit_left, fit_right = self.first_lane_finder(binary_img)
+            left_fit, right_fit, left_fitx, right_fitx = self.first_lane_finder(binary_img)
 
-        fill_img = self.fill_lanes(binary_img, fit_left, fit_right)
+        text = ""
+        left_curverad, right_curverad = self.calculate_road_features(binary_img, left_fit, right_fit, left_fitx, right_fitx)
 
-        merge_imgs = self.merge_imgs(fill_img, img)
+        if (self.radius_of_curvature == [] or self.skipped >= 5):
+            text = "First"
+            if (self.skipped >= 5):
+                left_fit, right_fit, left_fitx, right_fitx = self.first_lane_finder(binary_img)
+            self.radius_of_curvature = [left_curverad, right_curverad]
+            self.buffer_left[self.buffer_index] = left_fitx
+            self.buffer_right[self.buffer_index] = right_fitx
+
+            self.buffer_index += 1
+            self.buffer_index %= self.MAX_BUFFER_SIZE
+
+            if self.iter_counter < self.MAX_BUFFER_SIZE:
+                self.iter_counter += 1
+                self.ave_left = np.sum(self.buffer_left, axis=0) / self.iter_counter
+                self.ave_right = np.sum(self.buffer_right, axis=0) / self.iter_counter
+            else:
+                self.ave_left = np.average(self.buffer_left, axis=0)
+                self.ave_right = np.average(self.buffer_right, axis=0)
+
+        elif (left_curverad > self.radius_of_curvature[0] * 0.5
+                and left_curverad < self.radius_of_curvature[0] * 1.5
+                and right_curverad > self.radius_of_curvature[1] * 0.5
+                and right_curverad < self.radius_of_curvature[1] * 1.5):
+            text = "Repeat"
+            self.radius_of_curvature = [left_curverad, right_curverad]
+            self.buffer_left[self.buffer_index] = left_fitx
+            self.buffer_right[self.buffer_index] = right_fitx
+
+            self.buffer_index += 1
+            self.buffer_index %= self.MAX_BUFFER_SIZE
+
+            if self.iter_counter < self.MAX_BUFFER_SIZE:
+                self.iter_counter += 1
+                self.ave_left = np.sum(self.buffer_left, axis=0) / self.iter_counter
+                self.ave_right = np.sum(self.buffer_right, axis=0) / self.iter_counter
+            else:
+                self.ave_left = np.average(self.buffer_left, axis=0)
+                self.ave_right = np.average(self.buffer_right, axis=0)
+        else:
+            self.skipped += 1
+            text = "pass"
+            pass
+
+        # fill_img = self.fill_lanes(binary_img, ave_left, ave_right)
+        fill_img = self.paint_pretty_lines(binary_img, self.ave_left, self.ave_right)
+
+        curvature_text = 'Left Curvature: {:.2f} m    Right Curvature: {:.2f} m'.format(self.radius_of_curvature[0], self.radius_of_curvature[1])
+        curvature_text += text
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        merge_imgs = self.merge_imgs(fill_img, input_image)
+        cv2.putText(merge_imgs, curvature_text, (100, 50), font, 1, (221, 28, 119), 2)
 
         return merge_imgs
 
@@ -133,8 +203,6 @@ class Line():
 
         leftx_base = np.argmax(histogram[0:mid])
         rightx_base = np.argmax(histogram[mid:]) + mid # Add mid as an offset for splitting the image in half
-        print(leftx_base)
-        print(rightx_base)
 
         binary_warped = img
 
@@ -150,9 +218,9 @@ class Line():
         leftx_current = leftx_base
         rightx_current = rightx_base
         # Set the width of the windows +/- margin
-        margin = 75
+        margin = 65
         # Set minimum number of pixels found to recenter window
-        minpix = 35
+        minpix = 50
         # Create empty lists to receive left and right lane pixel indices
         left_lane_inds = []
         right_lane_inds = []
@@ -193,8 +261,10 @@ class Line():
         righty = nonzeroy[right_lane_inds]
 
         # Fit a second order polynomial to each
-        self.left_fit = np.polyfit(lefty, leftx, 2)
-        self.right_fit = np.polyfit(righty, rightx, 2)
+        left_fit = np.polyfit(lefty, leftx, 2)
+        right_fit = np.polyfit(righty, rightx, 2)
+        self.left_fit = left_fit
+        self.right_fit = right_fit
 
         self.detected = True
 
@@ -202,7 +272,7 @@ class Line():
         left_fitx = self.left_fit[0] * ploty ** 2 + self.left_fit[1] * ploty + self.left_fit[2]
         right_fitx = self.right_fit[0] * ploty ** 2 + self.right_fit[1] * ploty + self.right_fit[2]
 
-        return left_fitx, right_fitx
+        return left_fit, right_fit, left_fitx, right_fitx
 
     def repeat_lane_finder(self, img):
         # Assume you now have a new warped binary image
@@ -211,7 +281,7 @@ class Line():
         nonzero = img.nonzero()
         nonzeroy = np.array(nonzero[0])
         nonzerox = np.array(nonzero[1])
-        margin = 100
+        margin = 65
         left_lane_inds = ((nonzerox > (self.left_fit[0]*(nonzeroy**2) + self.left_fit[1]*nonzeroy + self.left_fit[2] - margin)) & (nonzerox < (self.left_fit[0]*(nonzeroy**2) + self.left_fit[1]*nonzeroy + self.left_fit[2] + margin)))
         right_lane_inds = ((nonzerox > (self.right_fit[0]*(nonzeroy**2) + self.right_fit[1]*nonzeroy + self.right_fit[2] - margin)) & (nonzerox < (self.right_fit[0]*(nonzeroy**2) + self.right_fit[1]*nonzeroy + self.right_fit[2] + margin)))
 
@@ -228,7 +298,7 @@ class Line():
         left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
         right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
 
-        return left_fitx, right_fitx
+        return left_fit, right_fit, left_fitx, right_fitx
 
     def fill_lanes(self, binary_img, left_fitx, right_fitx):
         ploty = np.linspace(0, binary_img.shape[0]-1, binary_img.shape[0] )
@@ -254,4 +324,38 @@ class Line():
         cp_original = np.copy(original_img)
 
         cp_bin = unwarp(cp_bin)
+        #cp_original = warp(cp_original)
         return cv2.addWeighted(cp_original, 1, cp_bin, 0.3, 0)
+
+    def calculate_road_features(self, img, left_fit, right_fit, leftx, rightx):
+        ploty = np.linspace(0, img.shape[0] - 1, img.shape[0])
+        y_eval = np.max(ploty)
+        left_curverad = ((1 + (2*left_fit[0]*y_eval + left_fit[1])**2)**1.5) / np.absolute(2*left_fit[0])
+        right_curverad = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) / np.absolute(2*right_fit[0])
+        # Define conversions in x and y from pixels space to meters
+        ym_per_pix = 30/720 # meters per pixel in y dimension
+        xm_per_pix = 3.7/700 # meters per pixel in x dimension
+
+        # Fit new polynomials to x,y in world space
+        left_fit_cr = np.polyfit(ploty*ym_per_pix, leftx*xm_per_pix, 2)
+        right_fit_cr = np.polyfit(ploty*ym_per_pix, rightx*xm_per_pix, 2)
+        # Calculate the new radii of curvature
+        left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
+        right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+        # Now our radius of curvature is in meters
+        #print(left_curverad, 'm', right_curverad, 'm')
+        # Example values: 632.1 m    626.2 m
+        return left_curverad, right_curverad
+
+    def paint_pretty_lines(self, image, left_fitx, right_fitx):
+        warp_zero = np.zeros_like(image).astype(np.uint8)
+
+        ploty = np.linspace(0, warp_zero.shape[0] - 1, warp_zero.shape[0])
+        pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+
+        pts = np.hstack((pts_left, pts_right))
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(warp_zero, np.int_([pts]), (0,255, 0))
+
+        return warp_zero
