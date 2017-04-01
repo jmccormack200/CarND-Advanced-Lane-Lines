@@ -14,11 +14,21 @@ def warper(img, src, dst):
 def binaryImage(image, sobel_thresh=[0, 255], l_thresh=[0, 255], s_thresh=[0,255]):
     # Create a copy to edit
     image_copy = np.copy(image)
+    #kernel_sharpen = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+    kernel_sharpen = np.array([[-1,-1,-1,-1,-1],
+                             [-1,2,2,2,-1],
+                             [-1,2,8,2,-1],
+                             [-1,2,2,2,-1],
+                             [-1,-1,-1,-1,-1]]) / 8.0
+    image_copy = cv2.filter2D(image_copy, -1, kernel_sharpen)
 
     # We then use the HLS color space.
     hls_image = cv2.cvtColor(image_copy, cv2.COLOR_RGB2HLS)
     l_channel = hls_image[:, :, 1]
     s_channel = hls_image[:, :, 2]
+
+    image_copy2 = np.copy(image)
+    grey_image = cv2.cvtColor(image_copy2, cv2.COLOR_BGR2GRAY)
 
     # Next we use an X direction Sobel
     # 1, 0 below for x direction
@@ -35,6 +45,7 @@ def binaryImage(image, sobel_thresh=[0, 255], l_thresh=[0, 255], s_thresh=[0,255
     # Then combine the three thresholds together
     combined = np.zeros_like(l_channel)
     combined[((l_channel_binary == 1) & (s_channel_binary == 1) | (sobel_x_binary == 1))] = 1
+    #combined[((s_channel_binary == 1) | (sobel_x_binary == 1))] = 1
     combined = prepImgForOut(combined)
     sobel_x_binary = prepImgForOut(sobel_x_binary)
     l_channel_binary = prepImgForOut(l_channel_binary)
@@ -109,13 +120,16 @@ class Line():
         self.ave_left = []
         self.ave_right = []
 
-        self.MAX_BUFFER_SIZE = 30
+        self.MAX_BUFFER_SIZE = 15
 
         self.buffer_index = 0
         self.iter_counter = 0
 
         self.buffer_left = np.zeros((self.MAX_BUFFER_SIZE, 720))
         self.buffer_right = np.zeros((self.MAX_BUFFER_SIZE, 720))
+
+        self.prev_left = []
+        self.prev_right = []
 
     def analyze(self, input_image):
         img = np.copy(input_image)
@@ -125,7 +139,7 @@ class Line():
         # 2. Warp Image
         warped_img = warp(undistorted_img)
         # 3. Create Binary Representation
-        binary_imgs = binaryImage(warped_img, sobel_thresh=[20, 255], l_thresh=[90, 255], s_thresh=[170,255])
+        binary_imgs = binaryImage(warped_img, sobel_thresh=[20, 100], l_thresh=[90, 255], s_thresh=[175,250])
         #binary_imgs = binaryImage(warped_img, sobel_thresh=[20, 255], l_thresh=[30, 255], s_thresh=[170,255])
         binary_img = binary_imgs[0]
 
@@ -138,10 +152,21 @@ class Line():
         text = ""
         left_curverad, right_curverad = self.calculate_road_features(binary_img, left_fit, right_fit, left_fitx, right_fitx)
 
-        if (self.radius_of_curvature == [] or self.skipped >= 5):
+        percent_right = 0
+        percent_left = 0
+        try:
+            precent_left = left_curverad / self.radius_of_curvature[0]
+            percent_right = right_curverad / self.radius_of_curvature[1]
+        except:
+            pass
+
+        if (self.radius_of_curvature == []):
             text = "First"
-            if (self.skipped >= 5):
-                left_fit, right_fit, left_fitx, right_fitx = self.first_lane_finder(binary_img)
+            self.skipped = 0
+                #self.buffer_left = []
+                #self.buffer_right = []
+                #self.buffer_index = 0
+
             self.radius_of_curvature = [left_curverad, right_curverad]
             self.buffer_left[self.buffer_index] = left_fitx
             self.buffer_right[self.buffer_index] = right_fitx
@@ -149,19 +174,18 @@ class Line():
             self.buffer_index += 1
             self.buffer_index %= self.MAX_BUFFER_SIZE
 
-            if self.iter_counter < self.MAX_BUFFER_SIZE:
-                self.iter_counter += 1
-                self.ave_left = np.sum(self.buffer_left, axis=0) / self.iter_counter
-                self.ave_right = np.sum(self.buffer_right, axis=0) / self.iter_counter
-            else:
-                self.ave_left = np.average(self.buffer_left, axis=0)
-                self.ave_right = np.average(self.buffer_right, axis=0)
+            self.ave_left = np.average(self.buffer_left, axis=0)
+            self.ave_right = np.average(self.buffer_right, axis=0)
+
+            self.prev_left = left_fitx
+            self.prev_right = right_fitx
 
         elif (left_curverad > self.radius_of_curvature[0] * 0.5
                 and left_curverad < self.radius_of_curvature[0] * 1.5
                 and right_curverad > self.radius_of_curvature[1] * 0.5
                 and right_curverad < self.radius_of_curvature[1] * 1.5):
             text = "Repeat"
+            self.skipped = 0
             self.radius_of_curvature = [left_curverad, right_curverad]
             self.buffer_left[self.buffer_index] = left_fitx
             self.buffer_right[self.buffer_index] = right_fitx
@@ -169,27 +193,36 @@ class Line():
             self.buffer_index += 1
             self.buffer_index %= self.MAX_BUFFER_SIZE
 
-            if self.iter_counter < self.MAX_BUFFER_SIZE:
-                self.iter_counter += 1
-                self.ave_left = np.sum(self.buffer_left, axis=0) / self.iter_counter
-                self.ave_right = np.sum(self.buffer_right, axis=0) / self.iter_counter
-            else:
-                self.ave_left = np.average(self.buffer_left, axis=0)
-                self.ave_right = np.average(self.buffer_right, axis=0)
+            self.ave_left = np.average(self.buffer_left, axis=0)
+            self.ave_right = np.average(self.buffer_right, axis=0)
+
+            self.prev_left = left_fitx
+            self.prev_right = right_fitx
+        elif (self.skipped > 5):
+            self.skipped = 0
+            self.detected = False
+            text = "broke"
+
+            self.ave_left = np.average(self.buffer_left, axis=0)
+            self.ave_right = np.average(self.buffer_right, axis=0)
         else:
             self.skipped += 1
             text = "pass"
-            pass
 
-        # fill_img = self.fill_lanes(binary_img, ave_left, ave_right)
-        fill_img = self.paint_pretty_lines(binary_img, self.ave_left, self.ave_right)
+            self.ave_left = np.average(self.buffer_left, axis=0)
+            self.ave_right = np.average(self.buffer_right, axis=0)
+
+        fill_img = self.fill_lanes(binary_img, self.ave_left, self.ave_right)
+        #fill_img = self.paint_pretty_lines(binary_img, self.ave_left, self.ave_right)
 
         curvature_text = 'Left Curvature: {:.2f} m    Right Curvature: {:.2f} m'.format(self.radius_of_curvature[0], self.radius_of_curvature[1])
         curvature_text += text
+        percent_text = "left: " + str(percent_left) + " right:  " + str(percent_right) + " skipped: " + str(self.skipped) + "iter: " + str(self.buffer_index)
         font = cv2.FONT_HERSHEY_SIMPLEX
 
-        merge_imgs = self.merge_imgs(fill_img, input_image)
+        merge_imgs = self.merge_imgs(fill_img, binary_img)
         cv2.putText(merge_imgs, curvature_text, (100, 50), font, 1, (221, 28, 119), 2)
+        cv2.putText(merge_imgs, percent_text, (100, 150), font, 1, (0, 255, 0), 2)
 
         return merge_imgs
 
@@ -201,8 +234,8 @@ class Line():
 
         mid = np.int(histogram.shape[0] / 2)
 
-        leftx_base = np.argmax(histogram[0:mid])
-        rightx_base = np.argmax(histogram[mid:]) + mid # Add mid as an offset for splitting the image in half
+        leftx_base = np.argmax(histogram[100:mid])
+        rightx_base = np.argmax(histogram[mid:1200]) + mid # Add mid as an offset for splitting the image in half
 
         binary_warped = img
 
@@ -218,7 +251,7 @@ class Line():
         leftx_current = leftx_base
         rightx_current = rightx_base
         # Set the width of the windows +/- margin
-        margin = 65
+        margin = 100
         # Set minimum number of pixels found to recenter window
         minpix = 50
         # Create empty lists to receive left and right lane pixel indices
@@ -281,7 +314,7 @@ class Line():
         nonzero = img.nonzero()
         nonzeroy = np.array(nonzero[0])
         nonzerox = np.array(nonzero[1])
-        margin = 65
+        margin = 100
         left_lane_inds = ((nonzerox > (self.left_fit[0]*(nonzeroy**2) + self.left_fit[1]*nonzeroy + self.left_fit[2] - margin)) & (nonzerox < (self.left_fit[0]*(nonzeroy**2) + self.left_fit[1]*nonzeroy + self.left_fit[2] + margin)))
         right_lane_inds = ((nonzerox > (self.right_fit[0]*(nonzeroy**2) + self.right_fit[1]*nonzeroy + self.right_fit[2] - margin)) & (nonzerox < (self.right_fit[0]*(nonzeroy**2) + self.right_fit[1]*nonzeroy + self.right_fit[2] + margin)))
 
@@ -323,7 +356,7 @@ class Line():
         cp_bin = np.copy(binary_img)
         cp_original = np.copy(original_img)
 
-        cp_bin = unwarp(cp_bin)
+        #cp_bin = unwarp(cp_bin)
         #cp_original = warp(cp_original)
         return cv2.addWeighted(cp_original, 1, cp_bin, 0.3, 0)
 
@@ -345,6 +378,8 @@ class Line():
         # Now our radius of curvature is in meters
         #print(left_curverad, 'm', right_curverad, 'm')
         # Example values: 632.1 m    626.2 m
+
+
         return left_curverad, right_curverad
 
     def paint_pretty_lines(self, image, left_fitx, right_fitx):
@@ -356,6 +391,6 @@ class Line():
 
         pts = np.hstack((pts_left, pts_right))
         # Draw the lane onto the warped blank image
-        cv2.fillPoly(warp_zero, np.int_([pts]), (0,255, 0))
+        cv2.fillPoly(warp_zero, np.int_([pts]), (255,0,0))
 
         return warp_zero
