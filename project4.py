@@ -66,10 +66,10 @@ def warp(img):
 
     img_size = (img.shape[1], img.shape[0])
 
-    #src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
-    #dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
-    src = np.float32([[253, 697],[585, 456],[700, 456],[1061, 690]])
-    dst = np.float32([[303, 697],[303, 0],[1011, 0],[1011, 690]])
+    src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
+    dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
+    # src = np.float32([[253, 697],[585, 456],[700, 456],[1061, 690]])
+    # dst = np.float32([[303, 697],[303, 0],[1011, 0],[1011, 690]])
 
     M = cv2.getPerspectiveTransform(src, dst)
 
@@ -78,10 +78,10 @@ def warp(img):
 def unwarp(img):
     img_size = (img.shape[1], img.shape[0])
 
-    #src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
-    #dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
-    src = np.float32([[253, 697],[585, 456],[700, 456],[1061, 690]])
-    dst = np.float32([[303, 697],[303, 0],[1011, 0],[1011, 690]])
+    src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
+    dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
+    # src = np.float32([[253, 697],[585, 456],[700, 456],[1061, 690]])
+    # dst = np.float32([[303, 697],[303, 0],[1011, 0],[1011, 690]])
 
     M = cv2.getPerspectiveTransform(dst, src)
 
@@ -120,7 +120,7 @@ class Line():
         self.ave_left = []
         self.ave_right = []
 
-        self.MAX_BUFFER_SIZE = 15
+        self.MAX_BUFFER_SIZE = 10
 
         self.buffer_index = 0
         self.iter_counter = 0
@@ -130,6 +130,8 @@ class Line():
 
         self.prev_left = []
         self.prev_right = []
+
+        self.first_run = 0
 
     def analyze(self, input_image):
         img = np.copy(input_image)
@@ -143,7 +145,6 @@ class Line():
         #binary_imgs = binaryImage(warped_img, sobel_thresh=[20, 255], l_thresh=[30, 255], s_thresh=[170,255])
         binary_img = binary_imgs[0]
 
-
         if self.detected:
             left_fit, right_fit, left_fitx, right_fitx = self.repeat_lane_finder(binary_img)
         else:
@@ -151,11 +152,13 @@ class Line():
 
         text = ""
         left_curverad, right_curverad = self.calculate_road_features(binary_img, left_fit, right_fit, left_fitx, right_fitx)
+        center_pt = self.calculate_center(binary_img, left_fit, right_fit)
 
         percent_right = 0
         percent_left = 0
+
         try:
-            precent_left = left_curverad / self.radius_of_curvature[0]
+            percent_left = left_curverad / self.radius_of_curvature[0]
             percent_right = right_curverad / self.radius_of_curvature[1]
         except:
             pass
@@ -163,19 +166,23 @@ class Line():
         if (self.radius_of_curvature == []):
             text = "First"
             self.skipped = 0
-                #self.buffer_left = []
-                #self.buffer_right = []
-                #self.buffer_index = 0
 
             self.radius_of_curvature = [left_curverad, right_curverad]
             self.buffer_left[self.buffer_index] = left_fitx
             self.buffer_right[self.buffer_index] = right_fitx
 
-            self.buffer_index += 1
-            self.buffer_index %= self.MAX_BUFFER_SIZE
+            if (self.buffer_index < self.MAX_BUFFER_SIZE):
+                self.buffer_index += 1
+            else:
+                self.buffer_index = 0
 
-            self.ave_left = np.average(self.buffer_left, axis=0)
-            self.ave_right = np.average(self.buffer_right, axis=0)
+            if (self.first_run < self.MAX_BUFFER_SIZE):
+                self.first_run += 1
+                self.ave_left = np.sum(self.buffer_left, axis=0) / self.first_run
+                self.ave_right = np.sum(self.buffer_right, axis=0) / self.first_run
+            else:
+                self.ave_left = np.average(self.buffer_left, axis=0)
+                self.ave_right = np.average(self.buffer_right, axis=0)
 
             self.prev_left = left_fitx
             self.prev_right = right_fitx
@@ -191,38 +198,57 @@ class Line():
             self.buffer_right[self.buffer_index] = right_fitx
 
             self.buffer_index += 1
-            self.buffer_index %= self.MAX_BUFFER_SIZE
+            if (self.buffer_index == self.MAX_BUFFER_SIZE):
+                self.buffer_index = 0
 
-            self.ave_left = np.average(self.buffer_left, axis=0)
-            self.ave_right = np.average(self.buffer_right, axis=0)
+            if (self.first_run < self.MAX_BUFFER_SIZE):
+                self.first_run += 1
+                self.ave_left = np.sum(self.buffer_left, axis=0) / self.first_run
+                self.ave_right = np.sum(self.buffer_right, axis=0) / self.first_run
+            else:
+                self.ave_left = np.average(self.buffer_left, axis=0)
+                self.ave_right = np.average(self.buffer_right, axis=0)
 
             self.prev_left = left_fitx
             self.prev_right = right_fitx
+
         elif (self.skipped > 5):
             self.skipped = 0
             self.detected = False
-            text = "broke"
+            text = "Broke"
 
-            self.ave_left = np.average(self.buffer_left, axis=0)
-            self.ave_right = np.average(self.buffer_right, axis=0)
+            if (self.first_run < self.MAX_BUFFER_SIZE):
+                self.first_run += 1
+                self.ave_left = np.sum(self.buffer_left, axis=0) / self.first_run
+                self.ave_right = np.sum(self.buffer_right, axis=0) / self.first_run
+            else:
+                self.ave_left = np.average(self.buffer_left, axis=0)
+                self.ave_right = np.average(self.buffer_right, axis=0)
         else:
             self.skipped += 1
-            text = "pass"
+            text = "Pass"
 
-            self.ave_left = np.average(self.buffer_left, axis=0)
-            self.ave_right = np.average(self.buffer_right, axis=0)
+            if (self.first_run < self.MAX_BUFFER_SIZE):
+                self.first_run += 1
+                self.ave_left = np.sum(self.buffer_left, axis=0) / self.first_run
+                self.ave_right = np.sum(self.buffer_right, axis=0) / self.first_run
+            else:
+                self.ave_left = np.average(self.buffer_left, axis=0)
+                self.ave_right = np.average(self.buffer_right, axis=0)
 
         #fill_img = self.fill_lanes(binary_img, self.ave_left, self.ave_right)
         fill_img = self.paint_pretty_lines(input_image, self.ave_left, self.ave_right)
 
-        curvature_text = 'Left Curvature: {:.2f} m    Right Curvature: {:.2f} m'.format(self.radius_of_curvature[0], self.radius_of_curvature[1])
+        curvature_text = "Left Curve: " + str(round(self.radius_of_curvature[0], 2)) + " m " + "Right Curvature:  " + str(round(self.radius_of_curvature[1],  2)) + "m "
         curvature_text += text
-        percent_text = "left: " + str(percent_left) + " right:  " + str(percent_right) + " skipped: " + str(self.skipped) + "iter: " + str(self.buffer_index)
-        font = cv2.FONT_HERSHEY_SIMPLEX
+        percent_text = "left: " + str(round(percent_left,2)) + " right:  " + str(round(percent_right,2)) + " skipped: " + str(self.skipped) + " iter: " + str(self.buffer_index)
+        font = cv2.FONT_HERSHEY_COMPLEX
+        center_pt = "Center Point: " + str(round(center_pt, 2))
 
         merge_imgs = self.merge_imgs(fill_img, input_image)
-        cv2.putText(merge_imgs, curvature_text, (100, 50), font, 1, (221, 28, 119), 2)
+        cv2.putText(merge_imgs, curvature_text, (100, 50), font, 1, (255, 0, 0), 2)
         cv2.putText(merge_imgs, percent_text, (100, 150), font, 1, (0, 255, 0), 2)
+        cv2.putText(merge_imgs, center_pt, (100, 250), font, 1, (0, 0, 255), 2)
 
         return merge_imgs
 
@@ -394,3 +420,16 @@ class Line():
         cv2.fillPoly(warp_zero, np.int_([pts]), (255,0,0))
 
         return warp_zero
+
+    def calculate_center(self, img, left_fit, right_fit):
+        left_intercept = left_fit[0] * img.shape[0] ** 2 + left_fit[1] * img.shape[0] + left_fit[2]
+        right_intercept = right_fit[0] * img.shape[0] ** 2 + right_fit[1] * img.shape[0] + right_fit[2]
+
+        road_width = right_intercept - left_intercept
+
+        xm_per_pix = 3.7/700 # meters per pixel in x dimension
+
+        calculated_center = (left_intercept + right_intercept) / 2.0
+        lane_deviation = (calculated_center - img.shape[1] / 2.0) * xm_per_pix
+
+        return lane_deviation
