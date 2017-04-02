@@ -120,7 +120,7 @@ class Line():
         self.ave_left = []
         self.ave_right = []
 
-        self.MAX_BUFFER_SIZE = 10
+        self.MAX_BUFFER_SIZE = 15
 
         self.buffer_index = 0
         self.iter_counter = 0
