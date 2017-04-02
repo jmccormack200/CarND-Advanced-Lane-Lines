@@ -44,9 +44,28 @@ def binaryImage(image, sobel_thresh=[0, 255], l_thresh=[0, 255], s_thresh=[0,255
 
     # Then combine the three thresholds together
     combined = np.zeros_like(l_channel)
-    combined[((l_channel_binary == 1) & (s_channel_binary == 1) | (sobel_x_binary == 1))] = 1
+    #combined[((l_channel_binary == 1) & (s_channel_binary == 1) | (sobel_x_binary == 1))] = 1
     #combined[((s_channel_binary == 1) | (sobel_x_binary == 1))] = 1
-    combined = prepImgForOut(combined)
+
+    hsv_img = np.copy(image)
+    image_copy = cv2.filter2D(hsv_img, -1, kernel_sharpen)
+    HSV = cv2.cvtColor(hsv_img, cv2.COLOR_RGB2HSV)
+
+    # For yellow
+    yellow = cv2.inRange(HSV, (70, 100,100), (120, 255, 255))
+
+    # For white
+    sensitivity_1 = 60
+    white = cv2.inRange(HSV, (0,0,255-sensitivity_1), (255,20,255))
+
+    sensitivity_2 = 50
+    HSL = cv2.cvtColor(hsv_img, cv2.COLOR_RGB2HLS)
+    white_2 = cv2.inRange(HSL, (0,255-sensitivity_2,0), (255,255,sensitivity_2))
+    white_3 = cv2.inRange(hsv_img, (200,200,200), (255,255,255))
+
+    bit_layer = (s_channel_binary & l_channel) | yellow | white | white_2 | white_3
+
+    combined = prepImgForOut(bit_layer)
     sobel_x_binary = prepImgForOut(sobel_x_binary)
     l_channel_binary = prepImgForOut(l_channel_binary)
     s_channel_binary = prepImgForOut(s_channel_binary)
@@ -66,7 +85,7 @@ def warp(img):
 
     img_size = (img.shape[1], img.shape[0])
 
-    src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
+    src = np.float32([[230, 690],[590, 450],[725, 450],[1150, 690]])
     dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
     # src = np.float32([[253, 697],[585, 456],[700, 456],[1061, 690]])
     # dst = np.float32([[303, 697],[303, 0],[1011, 0],[1011, 690]])
@@ -78,7 +97,7 @@ def warp(img):
 def unwarp(img):
     img_size = (img.shape[1], img.shape[0])
 
-    src = np.float32([[230, 690],[590, 450],[685, 450],[1075, 690]])
+    src = np.float32([[230, 690],[590, 450],[725, 450],[1150, 690]])
     dst = np.float32([[300, 690],[300, 0],[970, 0],[1000, 690]])
     # src = np.float32([[253, 697],[585, 456],[700, 456],[1061, 690]])
     # dst = np.float32([[303, 697],[303, 0],[1011, 0],[1011, 690]])
@@ -120,7 +139,7 @@ class Line():
         self.ave_left = []
         self.ave_right = []
 
-        self.MAX_BUFFER_SIZE = 10
+        self.MAX_BUFFER_SIZE = 5
 
         self.buffer_index = 0
         self.iter_counter = 0
@@ -187,10 +206,10 @@ class Line():
             self.prev_left = left_fitx
             self.prev_right = right_fitx
 
-        elif (left_curverad > self.radius_of_curvature[0] * 0.5
-                and left_curverad < self.radius_of_curvature[0] * 1.5
-                and right_curverad > self.radius_of_curvature[1] * 0.5
-                and right_curverad < self.radius_of_curvature[1] * 1.5):
+        elif (left_curverad > self.radius_of_curvature[0] * 0.75
+                and left_curverad < self.radius_of_curvature[0] * 1.24
+                and right_curverad > self.radius_of_curvature[1] * 0.75
+                and right_curverad < self.radius_of_curvature[1] * 1.25):
             text = "Repeat"
             self.skipped = 0
             self.radius_of_curvature = [left_curverad, right_curverad]
