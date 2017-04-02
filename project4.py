@@ -30,20 +30,22 @@ def binaryImage(image, sobel_thresh=[0, 255], l_thresh=[0, 255], s_thresh=[0,255
     image_copy2 = np.copy(image)
     grey_image = cv2.cvtColor(image_copy2, cv2.COLOR_BGR2GRAY)
 
+    '''
     # Next we use an X direction Sobel
     # 1, 0 below for x direction
     sobel_x =  cv2.Sobel(l_channel, cv2.CV_64F, 1, 0, ksize=5)
     # Then we scale
     abs_sobel_x = np.absolute(sobel_x)
     scaled_sobel_x = np.uint8( 255 * abs_sobel_x / np.max(abs_sobel_x))
+    '''
 
     # Now create a binary image from the our threshold values
-    sobel_x_binary = binaryImageHelper(scaled_sobel_x, sobel_thresh[0], sobel_thresh[1])
+    #sobel_x_binary = binaryImageHelper(scaled_sobel_x, sobel_thresh[0], sobel_thresh[1])
     l_channel_binary = binaryImageHelper(l_channel, l_thresh[0], l_thresh[1])
     s_channel_binary = binaryImageHelper(s_channel, s_thresh[0], s_thresh[1])
 
     # Then combine the three thresholds together
-    combined = np.zeros_like(l_channel)
+    #combined = np.zeros_like(l_channel)
     #combined[((l_channel_binary == 1) & (s_channel_binary == 1) | (sobel_x_binary == 1))] = 1
     #combined[((s_channel_binary == 1) | (sobel_x_binary == 1))] = 1
 
@@ -66,11 +68,11 @@ def binaryImage(image, sobel_thresh=[0, 255], l_thresh=[0, 255], s_thresh=[0,255
     bit_layer = (s_channel_binary & l_channel) | yellow | white | white_2 | white_3
 
     combined = prepImgForOut(bit_layer)
-    sobel_x_binary = prepImgForOut(sobel_x_binary)
+    yellow = prepImgForOut(yellow)
     l_channel_binary = prepImgForOut(l_channel_binary)
     s_channel_binary = prepImgForOut(s_channel_binary)
 
-    return combined, sobel_x_binary, l_channel_binary, s_channel_binary
+    return combined, yellow, l_channel_binary, s_channel_binary
 
 def binaryImageHelper(image, min_threshold, max_threshold):
     zeros_image = np.zeros_like(image)
@@ -165,7 +167,10 @@ class Line():
         binary_img = binary_imgs[0]
 
         if self.detected:
-            left_fit, right_fit, left_fitx, right_fitx = self.repeat_lane_finder(binary_img)
+            try:
+                left_fit, right_fit, left_fitx, right_fitx = self.repeat_lane_finder(binary_img)
+            except:
+                left_fit, right_fit, left_fitx, right_fitx = self.first_lane_finder(binary_img)
         else:
             left_fit, right_fit, left_fitx, right_fitx = self.first_lane_finder(binary_img)
 
@@ -231,7 +236,7 @@ class Line():
             self.prev_left = left_fitx
             self.prev_right = right_fitx
 
-        elif (self.skipped > 5):
+        elif (self.skipped > 3):
             self.skipped = 0
             self.detected = False
             text = "Broke"
